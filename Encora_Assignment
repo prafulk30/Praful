@@ -1,0 +1,43 @@
+mkdir my_mysql_patch && cd my_mysql_patch
+
+git init
+
+echo "# MySQL Patch for Tailoring Column" > README.md
+echo "*.o" > .gitignore
+\mkdir -p sql mysql-test/t
+
+cat > sql/infoschema.cc << 'EOF'
+static ST_FIELD_INFO collations_fields_info[] = {
+    {"ID", 3, MYSQL_TYPE_LONG, 0, 0, "Collation ID"},
+    {"IS_DEFAULT", 1, MYSQL_TYPE_STRING, 0, 0, "Whether it is the default collation"},
+    {"IS_COMPILED", 1, MYSQL_TYPE_STRING, 0, 0, "Whether it is compiled"},
+    {"TAILORING", 512, MYSQL_TYPE_STRING, 0, 0, "Tailoring rules"},
+    {NullS, 0, MYSQL_TYPE_NULL, 0, 0, 0}
+};
+
+static int make_row_collations(THD *thd, TABLE *table, uint idx) {
+    table->field[4]->store(is_compiled, strlen(is_compiled), system_charset_info);
+    const CHARSET_INFO *cs = get_charset(collation->number, MYF(0));
+    if (cs && cs->tailoring)
+        table->field[5]->store(cs->tailoring, strlen(cs->tailoring), system_charset_info);
+    else if (cs && cs->is_tailorable)
+        table->field[5]->store("", 0, system_charset_info);
+    else
+        table->field[5]->set_null();
+    return 0;
+}
+EOF
+
+cat > mysql-test/t/infoschema_collations.test << 'EOF'
+--echo # Test tailoring column in INFORMATION_SCHEMA.COLLATIONS
+SELECT TAILORING FROM INFORMATION_SCHEMA.COLLATIONS WHERE ID=199;
+
+--echo # Verify that a collation without tailoring returns an empty string
+SELECT TAILORING FROM INFORMATION_SCHEMA.COLLATIONS WHERE ID=45;
+
+--echo # Verify that NULL is returned when tailoring is not applicable
+SELECT TAILORING FROM INFORMATION_SCHEMA.COLLATIONS WHERE ID=10;
+EOF
+
+git add .
+git commit -m "Added tailoring column to INFORMATION_SCHEMA.COLLATIONS"
